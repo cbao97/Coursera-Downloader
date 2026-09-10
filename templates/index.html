@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coursera Downloader</title>
+<style>
+  :root {
+    --bg: #f5f7fa; --card: #ffffff; --text: #1a2332; --muted: #5b6b7f;
+    --accent: #0056d2; --accent-hover: #00449e; --border: #d8dfe8;
+    --log-bg: #10151c; --log-text: #c9d6e2; --ok: #1b7f4d; --err: #b3261e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif; font-size: 14px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px; margin-bottom: 16px;
+  }
+  label { display: block; font-weight: 600; margin: 12px 0 4px; }
+  label:first-child { margin-top: 0; }
+  .hint { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
+  input[type=text], input[type=password], select {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: 14px; background: #fff; color: var(--text);
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  .checks { display: flex; gap: 20px; margin-top: 12px; flex-wrap: wrap; }
+  .checks label { display: flex; align-items: center; gap: 6px; font-weight: 500; margin: 0; }
+  .btns { display: flex; gap: 10px; margin-top: 16px; }
+  button {
+    padding: 9px 22px; border: none; border-radius: 6px; font-size: 14px;
+    font-weight: 600; cursor: pointer;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:disabled { background: #9db6d8; cursor: not-allowed; }
+  .btn-stop { background: var(--err); color: #fff; display: none; }
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 12px;
+    font-size: 12px; font-weight: 600; margin-left: 8px; vertical-align: middle;
+  }
+  .badge.run { background: #e3f0e8; color: var(--ok); }
+  .badge.done { background: #e4e9f0; color: var(--muted); }
+  .badge.fail { background: #f9e3e2; color: var(--err); }
+  #log {
+    background: var(--log-bg); color: var(--log-text); border-radius: 8px;
+    padding: 12px; height: 340px; overflow-y: auto;
+    font-family: Consolas, "Courier New", monospace; font-size: 12px;
+    line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+  }
+  .msg { margin-top: 10px; font-size: 13px; min-height: 18px; }
+  .msg.err { color: var(--err); }
+  .msg.ok { color: var(--ok); }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  summary b { color: var(--text); }
+  ol { color: var(--muted); font-size: 13px; line-height: 1.7; margin: 8px 0 0; }
+  code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Coursera Downloader</h1>
+  <p class="sub">Local web GUI — everything stays on this machine.</p>
+
+  <div class="card">
+    <label>CAUTH cookie
+      <span class="hint">{% if cauth_stored %}saved — leave empty to reuse{% else %}paste from browser{% endif %}</span>
+    </label>
+    <input type="password" id="cauth" placeholder="Paste CAUTH value (kept local, never sent anywhere else)">
+
+    <details {% if not cauth_stored %}open{% endif %}>
+      <summary>How to get <b>CAUTH</b></summary>
+      <ol>
+        <li>Log in at <b>coursera.org</b> in your browser</li>
+        <li>Press <code>F12</code> &rarr; <b>Application</b> tab &rarr; <b>Cookies</b> &rarr; <code>https://www.coursera.org</code></li>
+        <li>Find the row named <code>CAUTH</code>, copy its <b>Value</b>, paste above</li>
+      </ol>
+    </details>
+
+    <label>Course</label>
+    <input type="text" id="course" value="{{ argdict.classname or '' }}" placeholder="machine-learning-foundations-for-product or full course URL">
+
+    <label>Download folder</label>
+    <input type="text" id="path" value="{{ argdict.path or '' }}" placeholder="D:\Coursera">
+
+    <div class="row">
+      <div>
+        <label>Video resolution</label>
+        <select id="resolution">
+          <option value="720p" {% if argdict.video_resolution == '720p' %}selected{% endif %}>720p</option>
+          <option value="540p" {% if argdict.video_resolution == '540p' %}selected{% endif %}>540p</option>
+          <option value="360p" {% if argdict.video_resolution == '360p' %}selected{% endif %}>360p</option>
+        </select>
+      </div>
+      <div>
+        <label>Subtitle language</label>
+        <select id="language">
+          {% for lang in languages %}
+          <option value="{{ lang }}" {% if lang == (argdict.sl or 'English') %}selected{% endif %}>{{ lang }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="checks">
+      <label><input type="checkbox" id="quizzes" checked> Quizzes &amp; exams</label>
+      <label><input type="checkbox" id="notebooks" checked> Jupyter notebooks</label>
+      <label><input type="checkbox" id="resume"> Resume last download</label>
+    </div>
+
+    <div class="btns">
+      <button class="btn-primary" id="startBtn" onclick="startDownload()">Download</button>
+      <button class="btn-stop" id="stopBtn" onclick="stopDownload()">Stop</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="card">
+    <b>Progress</b> <span id="statusBadge" class="badge done">idle</span>
+    <div style="height:10px"></div>
+    <div id="log">Log output will appear here ...</div>
+  </div>
+</div>
+
+<script>
+let total = 0;
+let pollTimer = null;
+
+function setMsg(text, cls) {
+  const el = document.getElementById('msg');
+  el.textContent = text || '';
+  el.className = 'msg ' + (cls || '');
+}
+
+function setBadge(state) {
+  const el = document.getElementById('statusBadge');
+  if (state === 'run') { el.className = 'badge run'; el.textContent = 'running'; }
+  else if (state === 'fail') { el.className = 'badge fail'; el.textContent = 'failed'; }
+  else if (state === 'done') { el.className = 'badge done'; el.textContent = 'finished'; }
+  else { el.className = 'badge done'; el.textContent = 'idle'; }
+}
+
+async function startDownload() {
+  setMsg('');
+  const body = {
+    cauth: document.getElementById('cauth').value,
+    course: document.getElementById('course').value,
+    path: document.getElementById('path').value,
+    resolution: document.getElementById('resolution').value,
+    language: document.getElementById('language').value,
+    resume: document.getElementById('resume').checked,
+  };
+  const res = await fetch('/api/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  const out = await res.json();
+  if (!out.ok) { setMsg(out.error, 'err'); return; }
+  setMsg('Downloading: ' + out.course, 'ok');
+  document.getElementById('cauth').value = '';
+  startPolling();
+}
+
+async function stopDownload() {
+  const res = await fetch('/api/stop', {method: 'POST'});
+  const out = await res.json();
+  if (!out.ok) setMsg(out.error, 'err');
+}
+
+let polling = false;
+async function poll() {
+  if (polling) return;
+  polling = true;
+  try {
+    const res = await fetch('/api/logs?since=' + total);
+    const out = await res.json();
+    total = out.total;
+    if (out.lines.length) {
+      const el = document.getElementById('log');
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+      el.textContent += (el.textContent ? '\n' : '') + out.lines.join('\n');
+      if (atBottom) el.scrollTop = el.scrollHeight;
+    }
+    setBadge(out.running ? 'run' : (out.exit_code === null ? 'idle'
+              : (out.exit_code === 0 ? 'done' : 'fail')));
+    document.getElementById('startBtn').disabled = out.running;
+    document.getElementById('stopBtn').style.display = out.running ? '' : 'none';
+    if (!out.running) stopPolling();
+  } finally {
+    polling = false;
+  }
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(poll, 1000);
+  poll();
+}
+function stopPolling() {
+  clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+poll();
+</script>
+</body>
+</html>
