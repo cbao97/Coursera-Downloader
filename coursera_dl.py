@@ -49,7 +49,10 @@ import re
 import time
 import shutil
 
-from distutils.version import LooseVersion as V
+def _parse_version(version):
+    """Minimal replacement for distutils.version.LooseVersion (removed in Python 3.12)."""
+    parts = re.findall(r'\d+', str(version))
+    return tuple(int(p) for p in parts)
 
 
 # Test versions of some critical modules.
@@ -78,8 +81,8 @@ from extractors import CourseraExtractor
 # URL containing information about outdated modules
 _SEE_URL = " See https://github.com/coursera-dl/coursera/issues/139"
 
-assert V(requests.__version__) >= V('2.4'), "Upgrade requests!" + _SEE_URL
-assert V(bs4.__version__) >= V('4.1'), "Upgrade bs4!" + _SEE_URL
+assert _parse_version(requests.__version__) >= _parse_version('2.4'), "Upgrade requests!" + _SEE_URL
+assert _parse_version(bs4.__version__) >= _parse_version('4.1'), "Upgrade bs4!" + _SEE_URL
 
 
 def get_session():

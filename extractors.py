@@ -161,6 +161,13 @@ class CourseraExtractor(PlatformExtractor):
                         links = course.extract_links_from_supplement(
                             lecture.id)
 
+                    elif typename == 'reading':
+                        # Reading items (e.g. "Download Module Slides" pages
+                        # with PDF attachments) are served through the same
+                        # onDemandSupplements.v1 endpoint as supplements.
+                        links = course.extract_links_from_supplement(
+                            lecture.id)
+
                     elif typename == 'phasedPeer':
                         links = course.extract_links_from_peer_assignment(
                             lecture.id)
