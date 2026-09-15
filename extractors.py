@@ -11,9 +11,10 @@ import logging
 
 from api import (CourseraOnDemand, OnDemandCourseMaterialItemsV1,
                  ModulesV1, LessonsV1, ItemsV2)
-from define import OPENCOURSE_ONDEMAND_COURSE_MATERIALS_V2
+from define import (OPENCOURSE_ONDEMAND_COURSE_MATERIALS_V2,
+                    IN_MEMORY_MARKER, IN_MEMORY_EXTENSION)
 from network import get_page
-from utils import is_debug_run, spit_json
+from utils import is_debug_run, spit_json, extend_supplement_links
 
 
 class PlatformExtractor(object):
@@ -182,9 +183,49 @@ class CourseraExtractor(PlatformExtractor):
                                 lecture.id)
                             
                     elif typename == 'staffGraded':
-                        logging.info(
-                            'Staff graded assignment skipped: "%s" in lecture "%s" (lecture id "%s")',
-                            lecture.slug, lecture.slug, lecture.id)
+                        if download_quizzes:
+                            links = course.extract_links_from_quiz(
+                                lecture.id)
+
+                    elif typename in ('ungradedAssignment',):
+                        # Practice quizzes use the same quiz session API as
+                        # graded quizzes.
+                        if download_quizzes:
+                            links = course.extract_links_from_quiz(
+                                lecture.id)
+
+                    elif typename == 'coach':
+                        # Coaching items usually wrap a regular video.
+                        definition = (lecture.content or {}).get(
+                            'definition', {}) or {}
+                        video_id = definition.get('videoId')
+                        if video_id:
+                            links = course.extract_links_from_lecture(
+                                class_id, video_id, subtitle_language,
+                                video_resolution)
+                        else:
+                            logging.info(
+                                'Coach item without video skipped: "%s" (lecture id "%s")',
+                                lecture.slug, lecture.id)
+                            continue
+
+                    elif typename == 'ungradedWidget':
+                        # No static file exists for interactive widgets; dump
+                        # the raw item content as JSON for offline reference.
+                        try:
+                            widget_json = json.dumps(
+                                lecture.content, indent=2, ensure_ascii=False)
+                            links = {}
+                            extend_supplement_links(links, {
+                                IN_MEMORY_EXTENSION: [
+                                    (IN_MEMORY_MARKER + widget_json,
+                                     lecture.slug),
+                                ]})
+                        except (TypeError, ValueError):
+                            logging.info(
+                                'Could not serialize widget "%s" (lecture id "%s")',
+                                lecture.slug, lecture.id)
+                            continue
 
                     elif typename == 'exam':
                         if download_quizzes:
@@ -220,6 +261,18 @@ class CourseraExtractor(PlatformExtractor):
 
             if lessons:
                 modules.append((module.slug, lessons))
+
+        # Readable titles for the tg-drive course manifest (course.json).
+        manifest_titles = {}
+        for module in all_modules:
+            items = {}
+            for section in module.children(all_lessons):
+                for lecture in section.children(all_items):
+                    items[lecture.slug] = lecture.name
+            manifest_titles[module.slug] = {'name': module.name,
+                                            'items': items}
+        spit_json(manifest_titles,
+                  '%s-titles-parsed.json' % course_name)
 
         if modules and reverse:
             modules.reverse()

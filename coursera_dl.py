@@ -60,6 +60,8 @@ def _parse_version(version):
 import bs4
 import requests
 
+from manifest import load_titles, write_manifest
+
 from cookies import (
     AuthenticationFailed, ClassNotFound,
     get_cookies_for_class, make_cookie_values, TLSAdapter, login)
@@ -185,6 +187,10 @@ def download_on_demand_class(session, args, class_name):
 
     if is_debug_run or args.cache_syllabus():
         spit_json(modules, cached_syllabus_filename)
+
+    # course.json for tg-drive — even on syllabus-only runs
+    write_manifest(args.path, class_name, modules, load_titles(class_name),
+                   args)
 
     if args.only_syllabus:
         return error_occurred, False
