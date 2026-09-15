@@ -23,3 +23,5 @@ img/
 default_databin/
 dist/
 .venv/
+# runtime state (contains CAUTH cookie)
+data.bin

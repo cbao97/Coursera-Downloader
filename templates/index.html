@@ -56,6 +56,37 @@
     font-family: Consolas, "Courier New", monospace; font-size: 12px;
     line-height: 1.5; white-space: pre-wrap; word-break: break-all;
   }
+  #failedList {
+    background: var(--log-bg); color: var(--log-text); border-radius: 8px;
+    padding: 12px; max-height: 180px; overflow-y: auto;
+    font-family: Consolas, "Courier New", monospace; font-size: 12px;
+    line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+  }
+  #retryBtn { margin-left: 10px; }
+  .sumtable { width: 100%; font-size: 13px; border-collapse: collapse; }
+  .sumtable td { padding: 4px 0; }
+  .sumtable td:first-child { color: var(--muted); width: 55%; }
+  .hint { font-size: 12px; margin-top: 4px; min-height: 16px; }
+  .hint.ok { color: var(--ok); }
+  .hint.warn { color: var(--err); }
+  .hintbtn { padding: 3px 10px; border-radius: 6px; border: 1px solid var(--log-bg);
+             background: transparent; cursor: pointer; font-size: 12px;
+             color: var(--muted); }
+  .hintbtn:hover { color: var(--text); }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .tab-btn { padding: 8px 18px; border-radius: 8px; border: 1px solid transparent;
+             background: transparent; cursor: pointer; font-size: 14px;
+             color: var(--muted); }
+  .tab-btn.active { background: var(--log-bg); color: var(--text); font-weight: 600; }
+  .cstable { width: 100%; font-size: 13px; border-collapse: collapse; }
+  .cstable th, .cstable td { text-align: left; padding: 7px 8px;
+                             border-bottom: 1px solid var(--log-bg); }
+  .cstable th { color: var(--muted); font-size: 12px; font-weight: 600; }
+  .cstable .st-ok { color: var(--ok); }
+  .cstable .st-partial { color: var(--err); }
+  .cstable .st-gone { color: var(--muted); font-style: italic; }
+  .cstable button { padding: 3px 10px; border-radius: 6px; border: none;
+                    background: var(--log-bg); cursor: pointer; font-size: 12px; }
   .msg { margin-top: 10px; font-size: 13px; min-height: 18px; }
   .msg.err { color: var(--err); }
   .msg.ok { color: var(--ok); }
@@ -71,6 +102,12 @@
   <h1>Coursera Downloader</h1>
   <p class="sub">Local web GUI — everything stays on this machine.</p>
 
+  <div class="tabs">
+    <button class="tab-btn active" id="tabBtnDownload" onclick="showTab('download')">Download</button>
+    <button class="tab-btn" id="tabBtnLibrary" onclick="showTab('library')">Downloaded courses</button>
+  </div>
+
+  <div id="tabDownload">
   <div class="card">
     <label>CAUTH cookie
       <span class="hint">{% if cauth_stored %}saved — leave empty to reuse{% else %}paste from browser{% endif %}</span>
@@ -88,6 +125,10 @@
 
     <label>Course</label>
     <input type="text" id="course" value="{{ argdict.classname or '' }}" placeholder="machine-learning-foundations-for-product or full course URL">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div class="hint" id="courseHint" style="flex:1"></div>
+      <button class="hintbtn" id="recheckBtn" hidden onclick="updateCourse()">Recheck</button>
+    </div>
 
     <label>Download folder</label>
     <input type="text" id="path" value="{{ argdict.path or '' }}" placeholder="D:\Coursera">
@@ -96,6 +137,7 @@
       <div>
         <label>Video resolution</label>
         <select id="resolution">
+          <option value="1080p" {% if argdict.video_resolution == '1080p' %}selected{% endif %}>1080p (if available)</option>
           <option value="720p" {% if argdict.video_resolution == '720p' %}selected{% endif %}>720p</option>
           <option value="540p" {% if argdict.video_resolution == '540p' %}selected{% endif %}>540p</option>
           <option value="360p" {% if argdict.video_resolution == '360p' %}selected{% endif %}>360p</option>
@@ -129,6 +171,43 @@
     <div style="height:10px"></div>
     <div id="log">Log output will appear here ...</div>
   </div>
+
+  <div class="card" id="failedCard" hidden>
+    <b>Failed downloads</b> <span id="failedCount" class="badge fail">0</span>
+    <button class="btn-primary" id="retryBtn" onclick="retryFailed()">Retry failed</button>
+    <div style="height:8px"></div>
+    <div id="failedList"></div>
+  </div>
+
+  <div class="card" id="summaryCard" hidden>
+    <b>Summary</b> <span id="summaryBadge" class="badge done">finished</span>
+    <div style="height:10px"></div>
+    <table class="sumtable">
+      <tr><td>Status</td><td id="sumStatus"></td></tr>
+      <tr><td>Course</td><td id="sumCourse"></td></tr>
+      <tr><td>Downloaded this run</td><td id="sumDownloaded"></td></tr>
+      <tr><td>Already on disk (skipped)</td><td id="sumSkipped"></td></tr>
+      <tr><td>Failed</td><td id="sumFailed"></td></tr>
+      <tr><td>Duration</td><td id="sumDuration"></td></tr>
+    </table>
+  </div>
+  </div><!-- /tabDownload -->
+
+  <div id="tabLibrary" hidden>
+    <div class="card">
+      <b>Downloaded courses</b>
+      <button class="tab-btn" style="float:right; padding:4px 12px;" onclick="loadLibrary(true)">Refresh</button>
+      <div style="height:10px"></div>
+      <table class="cstable" id="csTable">
+        <thead>
+          <tr><th>Course</th><th>Status</th><th>Files on disk</th><th>Failed</th><th>Finished</th><th></th></tr>
+        </thead>
+        <tbody id="csBody">
+          <tr><td colspan="6" style="color:var(--muted)">No downloads recorded yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div><!-- /tabLibrary -->
 </div>
 
 <script>
@@ -151,6 +230,19 @@ function setBadge(state) {
 
 async function startDownload() {
   setMsg('');
+  const courseVal = document.getElementById('course').value.trim();
+  if (courseVal) {
+    try {
+      const st = await (await fetch('/api/course-status?course=' + encodeURIComponent(courseVal))).json();
+      if (st.downloaded) {
+        const when = st.finished_at ? new Date(st.finished_at * 1000).toLocaleString() : '';
+        const state = st.status === 'completed'
+          ? 'Course already downloaded' + (when ? ' (' + when + ', ' + st.files_on_disk + ' files)' : '')
+          : 'Partial download (' + st.failed + ' failed, ' + st.files_on_disk + ' files)';
+        if (!confirm(state + '. Redownload?')) return;
+      }
+    } catch (e) { /* status check is advisory only */ }
+  }
   const body = {
     cauth: document.getElementById('cauth').value,
     course: document.getElementById('course').value,
@@ -177,6 +269,17 @@ async function stopDownload() {
   if (!out.ok) setMsg(out.error, 'err');
 }
 
+async function retryFailed() {
+  setMsg('');
+  const btn = document.getElementById('retryBtn');
+  btn.disabled = true;
+  const res = await fetch('/api/retry', {method: 'POST'});
+  const out = await res.json();
+  if (!out.ok) { setMsg(out.error, 'err'); btn.disabled = false; return; }
+  setMsg('Retrying ' + out.retrying + ' failed file(s): ' + out.course, 'ok');
+  startPolling();
+}
+
 let polling = false;
 async function poll() {
   if (polling) return;
@@ -195,6 +298,44 @@ async function poll() {
               : (out.exit_code === 0 ? 'done' : 'fail')));
     document.getElementById('startBtn').disabled = out.running;
     document.getElementById('stopBtn').style.display = out.running ? '' : 'none';
+
+    const failed = out.failed_urls || [];
+    const card = document.getElementById('failedCard');
+    if (failed.length) {
+      card.hidden = false;
+      document.getElementById('failedCount').textContent = failed.length;
+      document.getElementById('failedList').textContent = failed.join('\n');
+      document.getElementById('retryBtn').disabled = out.running;
+    } else {
+      card.hidden = true;
+    }
+
+    const finished = !out.running && out.exit_code !== null;
+    const summary = document.getElementById('summaryCard');
+    if (finished) {
+      const dur = out.finished_at && out.started_at
+        ? Math.round(out.finished_at - out.started_at) : null;
+      const mmss = dur !== null
+        ? Math.floor(dur / 60) + 'm ' + String(dur % 60).padStart(2, '0') + 's' : '-';
+      const stats = out.stats || {downloaded: 0, skipped: 0};
+      document.getElementById('summaryBadge').className =
+        'badge ' + (out.exit_code === 0 ? 'done' : 'fail');
+      document.getElementById('summaryBadge').textContent =
+        out.exit_code === 0 ? 'finished' : 'exit ' + out.exit_code;
+      document.getElementById('sumStatus').textContent =
+        out.exit_code === 0 ? 'OK' : 'Error (exit code ' + out.exit_code + ')';
+      document.getElementById('sumCourse').textContent =
+        document.getElementById('course').value || '(previous run)';
+      document.getElementById('sumDownloaded').textContent = stats.downloaded;
+      document.getElementById('sumSkipped').textContent = stats.skipped;
+      document.getElementById('sumFailed').textContent = failed.length;
+      document.getElementById('sumDuration').textContent = mmss;
+      summary.hidden = false;
+    } else {
+      summary.hidden = true;
+    }
+    if (!out.running && out.exit_code !== null) checkCourseStatus();
+    if (!out.running && !document.getElementById('tabLibrary').hidden) loadLibrary();
     if (!out.running) stopPolling();
   } finally {
     polling = false;
@@ -211,7 +352,105 @@ function stopPolling() {
   pollTimer = null;
 }
 
+function showTab(name) {
+  const dl = document.getElementById('tabDownload');
+  const lib = document.getElementById('tabLibrary');
+  const bD = document.getElementById('tabBtnDownload');
+  const bL = document.getElementById('tabBtnLibrary');
+  if (name === 'library') {
+    dl.hidden = true; lib.hidden = false;
+    bL.classList.add('active'); bD.classList.remove('active');
+    loadLibrary();
+  } else {
+    dl.hidden = false; lib.hidden = true;
+    bD.classList.add('active'); bL.classList.remove('active');
+  }
+}
+
+async function loadLibrary(force) {
+  const body = document.getElementById('csBody');
+  if (force) body.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">Loading ...</td></tr>';
+  try {
+    const out = await (await fetch('/api/courses')).json();
+    const rows = out.courses || [];
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No downloads recorded yet.</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(r => {
+      const when = r.finished_at ? new Date(r.finished_at * 1000).toLocaleString() : '';
+      const st = !r.on_disk
+        ? '<span class="st-gone">folder deleted</span>'
+        : (r.status === 'completed'
+            ? '<span class="st-ok">✓ completed</span>'
+            : '<span class="st-partial">⚠ partial (' + r.failed + ' failed)</span>');
+      return '<tr>'
+        + '<td>' + r.course + '</td>'
+        + '<td>' + st + '</td>'
+        + '<td>' + r.files_on_disk + '</td>'
+        + '<td>' + r.failed + '</td>'
+        + '<td>' + when + '</td>'
+        + '<td>'
+        + '<button onclick="openCourse(\'' + r.course + '\')">Open</button> '
+        + (r.on_disk ? '<button onclick="updateCourse(\'' + r.course + '\')">Update</button>' : '')
+        + '</td>'
+        + '</tr>';
+    }).join('');
+  } catch (e) {
+    body.innerHTML = '<tr><td colspan="6" style="color:var(--err)">Failed to load library.</td></tr>';
+  }
+}
+
+function openCourse(course) {
+  document.getElementById('course').value = course;
+  showTab('download');
+  checkCourseStatus();
+}
+
+async function updateCourse(course) {
+  setMsg('');
+  const c = typeof course === 'string' && course ? course
+    : document.getElementById('course').value.trim();
+  if (!c) { setMsg('No course to recheck', 'err'); return; }
+  setMsg('Rechecking: ' + c, 'ok');
+  const res = await fetch('/api/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({course: c}),
+  });
+  const out = await res.json();
+  if (!out.ok) { setMsg(out.error, 'err'); return; }
+  document.getElementById('course').value = c;
+  startPolling();
+}
+
+async function checkCourseStatus() {
+  const c = document.getElementById('course').value.trim();
+  const hint = document.getElementById('courseHint');
+  const btn = document.getElementById('recheckBtn');
+  if (!c) { hint.textContent = ''; btn.hidden = true; return; }
+  try {
+    const st = await (await fetch('/api/course-status?course=' + encodeURIComponent(c))).json();
+    if (st.downloaded) {
+      const when = st.finished_at ? new Date(st.finished_at * 1000).toLocaleString() : '';
+      if (st.status === 'completed') {
+        hint.textContent = '✓ Downloaded ' + when + ' — ' + st.files_on_disk + ' files on disk';
+        hint.className = 'hint ok';
+      } else {
+        hint.textContent = '⚠ Partial — ' + st.failed + ' failed, ' + st.files_on_disk + ' files (' + when + ')';
+        hint.className = 'hint warn';
+      }
+      btn.hidden = false;
+    } else {
+      hint.textContent = '';
+      btn.hidden = true;
+    }
+  } catch (e) { hint.textContent = ''; btn.hidden = true; }
+}
+document.getElementById('course').addEventListener('change', checkCourseStatus);
+
 poll();
+checkCourseStatus();
 </script>
 </body>
 </html>

@@ -58,6 +58,9 @@ from define import (OPENCOURSE_SUPPLEMENT_URL,
 
 
 from cookies import prepare_auth_headers
+from graphql_submissions import (QUERY_STATE_QUERY,
+                                 ASSIGNMENT_FEEDBACK_QUERY,
+                                 START_ATTEMPT_MUTATION)
 
 
 class QuizExamToMarkupConverter(object):
@@ -484,6 +487,7 @@ class ItemV2(object):
     type_name = attr.ib()
     lesson_id = attr.ib()
     module_id = attr.ib()
+    content = attr.ib(default=None)
 
 
 @attr.s
@@ -499,7 +503,8 @@ class ItemsV2(object):
                     item['slug'],
                     item['contentSummary']['typeName'],
                     item['lessonId'],
-                    item['moduleId']))
+                    item['moduleId'],
+                    item.get('content')))
             for item in data
         ))
 
@@ -776,6 +781,19 @@ class CourseraOnDemand(object):
             return None
 
     def extract_links_from_quiz(self, quiz_id):
+        # Modern Submission-platform quizzes (practice quizzes, staff-graded
+        # items and most new quizzes) are served through graphql-gateway.
+        # The legacy opencourse.v1 quiz/session API rejects them with
+        # "Wrong content type for item ... UngradedAssignmentContent".
+        try:
+            links = self._extract_links_from_submission_quiz(quiz_id)
+            if links is not None:
+                return links
+        except Exception as exception:  # noqa: BLE001 - best effort path
+            logging.debug('Submission GraphQL path failed for quiz %s: %s',
+                          quiz_id, exception)
+
+        # Fall back to the legacy quiz/session API for old-style quizzes.
         try:
             session_id = self._get_quiz_session_id(quiz_id)
             quiz_json = self._get_quiz_json(quiz_id, session_id)
@@ -786,6 +804,243 @@ class CourseraOnDemand(object):
                 logging.exception(
                     'Could not download quiz %s: %s', quiz_id, exception)
             return None
+
+    # ------------------------------------------------------------------
+    # Submission-platform (graphql-gateway) quiz retrieval
+    # ------------------------------------------------------------------
+
+    GRAPHQL_GATEWAY_URL = 'https://www.coursera.org/graphql-gateway'
+
+    def _graphql_gateway_post(self, opname, payload):
+        headers = self._auth_headers_with_json()
+        headers['X-Requested-With'] = 'XMLHttpRequest'
+        reply = self._session.post(
+            self.GRAPHQL_GATEWAY_URL + '?opname=' + opname,
+            json=[payload], headers=headers)
+        reply.raise_for_status()
+        return reply.json()[0]
+
+    def _query_submission_state(self, item_id):
+        reply = self._graphql_gateway_post('QueryState', {
+            'operationName': 'QueryState',
+            'variables': {'courseId': self._course_id, 'itemId': item_id},
+            'query': QUERY_STATE_QUERY})
+        data = reply.get('data', {}).get('SubmissionState', {})
+        query_state = data.get('queryState') or {}
+        if query_state.get('__typename') != 'Submission_SubmissionState':
+            logging.debug('QueryState failed for item %s: %s',
+                          item_id, json.dumps(query_state)[:400])
+            return None
+        return query_state
+
+    def _start_submission_attempt(self, item_id):
+        reply = self._graphql_gateway_post('Submission_StartAttempt', {
+            'operationName': 'Submission_StartAttempt',
+            'variables': {'courseId': self._course_id, 'itemId': item_id},
+            'query': START_ATTEMPT_MUTATION})
+        result = ((reply.get('data', {}).get('Submission_StartAttempt') or {})
+                  .get('Submission_StartAttempt'))
+        if result == 'Submission_StartAttemptFailure':
+            logging.debug('StartAttempt failed for item %s: %s',
+                          item_id, json.dumps(reply)[:300])
+            return False
+        return True
+
+    def _query_submission_feedback(self, item_id):
+        reply = self._graphql_gateway_post('AssignmentFeedback', {
+            'operationName': 'AssignmentFeedback',
+            'variables': {'courseId': self._course_id, 'itemId': item_id},
+            'query': ASSIGNMENT_FEEDBACK_QUERY})
+        try:
+            query_state = reply['data']['SubmissionState']['queryState']
+        except (AttributeError, KeyError, TypeError):
+            return None
+        if query_state.get('__typename') != 'Submission_SubmissionState':
+            return None
+        return query_state.get('feedback')
+
+    def _extract_links_from_submission_quiz(self, quiz_id):
+        state = self._query_submission_state(quiz_id)
+        if state is None:
+            return None
+
+        attempts = state.get('attempts') or {}
+        last_submission = ((attempts.get('lastSubmission') or {})
+                           .get('submission') or {})
+        in_progress = (attempts.get('inProgressAttempt') or {})
+        draft = in_progress.get('draft') or {}
+
+        parts = last_submission.get('parts') or draft.get('parts') or []
+        if not parts:
+            # Questions only exist inside an attempt. Auto-start one for
+            # ungraded (practice) items only -- never burn graded attempts.
+            grading_type = ((state.get('assignment') or {})
+                            .get('assignmentGradingType'))
+            if grading_type == 'UNGRADED' and self._start_submission_attempt(
+                    quiz_id):
+                state = self._query_submission_state(quiz_id)
+                if state is None:
+                    return None
+                in_progress = (state.get('attempts') or {}).get(
+                    'inProgressAttempt') or {}
+                draft = in_progress.get('draft') or {}
+                parts = draft.get('parts') or []
+            else:
+                logging.info('Quiz %s has no attempts yet; skip', quiz_id)
+                return None
+
+        feedback = self._query_submission_feedback(quiz_id)
+        return self._convert_submission_to_links(state, parts, feedback)
+
+    @staticmethod
+    def _cml_to_html(content):
+        """Extract the most readable HTML representation of a CmlContent."""
+        if not content:
+            return ''
+        html = ((content.get('htmlWithMetadata') or {}).get('html') or '')
+        if html:
+            # unwrap the cmlToHtml wrapper div
+            return re.sub(r'^<div[^>]*>|</div>$', '', html).strip()
+        return content.get('cmlValue') or ''
+
+    def _convert_submission_to_links(self, state, parts, feedback):
+        markup = self._submission_to_markup(state, parts, feedback)
+        html = self._markup_to_html(markup)
+
+        supplement_links = {}
+        instructions = (IN_MEMORY_MARKER + html, 'quiz')
+        extend_supplement_links(
+            supplement_links, {IN_MEMORY_EXTENSION: [instructions]})
+        return supplement_links
+
+    # Question types rendered as radio input
+    RADIO_QUESTION_TYPES = ('Submission_MultipleChoiceQuestion',
+                            'Submission_MultipleChoiceReflectQuestion')
+    # Question types rendered as checkbox input
+    CHECKBOX_QUESTION_TYPES = ('Submission_CheckboxQuestion',
+                               'Submission_CheckboxReflectQuestion')
+    # Question types rendered as free-text input
+    INPUT_QUESTION_TYPES = ('Submission_TextExactMatchQuestion',
+                            'Submission_NumericQuestion',
+                            'Submission_RegexQuestion',
+                            'Submission_MathQuestion',
+                            'Submission_PlainTextQuestion',
+                            'Submission_RichTextQuestion',
+                            'Submission_CodeExpressionQuestion',
+                            'Submission_FileUploadQuestion',
+                            'Submission_UrlQuestion')
+
+    def _submission_to_markup(self, state, parts, feedback):
+        result = []
+
+        assignment = state.get('assignment') or {}
+        passing = assignment.get('passingFraction')
+        outcome = state.get('outcome') or {}
+        if outcome:
+            result.append('<p>Grade: %s%% (passing grade: %s%%)</p>' % (
+                round(100 * (outcome.get('earnedGrade') or 0)),
+                round(100 * passing) if passing is not None else '?'))
+
+        # feedback parts, keyed by the trailing element id of partId
+        feedback_by_part = {}
+        for fb_part in ((feedback or {}).get('parts') or []):
+            key = (fb_part.get('partId') or '').split('~')[-1]
+            feedback_by_part[key] = fb_part
+
+        question_number = 0
+        for part in parts:
+            type_name = part.get('__typename', '')
+            schema = part.get('questionSchema') or {}
+
+            if type_name == 'Submission_TextBlock':
+                result.append('<h3>%s</h3>' % (part.get('title') or ''))
+                result.append(self._cml_to_html(part.get('body')))
+                result.append('<hr>')
+                continue
+
+            question_number += 1
+            result.append('<h3>Question %d</h3>' % question_number)
+            result.append(self._cml_to_html(schema.get('prompt')))
+
+            # correctness + reviewer feedback for this part (if submitted)
+            key = (part.get('partId') or '').split('~')[-1]
+            fb = feedback_by_part.get(key)
+            if fb:
+                fb_data = fb.get('feedback') or {}
+                correctness = fb_data.get('correctness')
+                if correctness:
+                    result.append('<p><b>%s</b></p>' % correctness.title())
+                fb_text = self._cml_to_html(fb_data.get('feedback'))
+                if fb_text:
+                    result.append('<p>%s</p>' % fb_text)
+
+            if type_name in self.RADIO_QUESTION_TYPES:
+                result.extend(self._submission_options(
+                    question_number, schema.get('options'),
+                    'radio', part.get('multipleChoiceResponse')))
+            elif type_name in self.CHECKBOX_QUESTION_TYPES:
+                result.extend(self._submission_options(
+                    question_number, schema.get('options'),
+                    'checkbox', part.get('checkboxResponse')))
+            elif type_name in self.INPUT_QUESTION_TYPES:
+                answer = self._submission_text_answer(type_name, part)
+                if answer:
+                    result.append('<p><b>Your answer:</b> %s</p>' % answer)
+                else:
+                    result.append('<p><i>(no answer submitted)</i></p>')
+            else:
+                if schema:
+                    logging.info('Unknown submission part type: %s', type_name)
+
+            result.append('<hr>')
+
+        return '\n'.join(result)
+
+    def _submission_options(self, question_number, options,
+                            input_type, response):
+        if not options:
+            return []
+
+        chosen = None
+        if response:
+            chosen = response.get('chosen')
+
+        result = ['<form>']
+        for option in options:
+            option_text = self._cml_to_html(option.get('display'))
+            # keep option text inline with the radio/checkbox control
+            option_text = re.sub(r'^<p>|</p>$', '', option_text)
+            marker = ''
+            if chosen is not None:
+                # chosen may be a single optionId or a list (checkbox)
+                ids = chosen if isinstance(chosen, list) else [chosen]
+                if option.get('optionId') in ids:
+                    marker = ' &#10004;'
+            result.append('<label><input type="%s" name="%s">%s%s<br>'
+                          '</label>' % (input_type, question_number,
+                                        option_text, marker))
+        result.append('</form>')
+        return result
+
+    def _submission_text_answer(self, type_name, part):
+        response = None
+        for key in ('plainTextResponse', 'numericResponse', 'regexResponse',
+                    'mathResponse', 'textExactMatchResponse',
+                    'richTextResponse', 'urlResponse',
+                    'codeExpressionResponse'):
+            if key in part:
+                response = part[key]
+                break
+        if response is None:
+            return ''
+        answer = response.get('answer') or response.get('plainText')
+        if isinstance(answer, dict):
+            # code answers are {"code": "..."} -- richText is CmlContent
+            answer = answer.get('code') or self._cml_to_html(answer)
+        if isinstance(answer, dict):
+            # richText answers are CmlContent objects
+            answer = self._cml_to_html(answer)
+        return str(answer) if answer else ''
 
     def _convert_quiz_json_to_links(self, quiz_json, filename_suffix):
         markup = self._quiz_to_markup(quiz_json)

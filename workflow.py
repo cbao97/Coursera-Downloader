@@ -188,9 +188,16 @@ class CourseraDownloader(CourseDownloader):
             logging.error('The following error has occurred while '
                           'downloading URL %s: %s', url, str(result))
             self.failed_urls.append(url)
+            logging.info('[FAILED_URL] %s', url)
         elif isinstance(result, Exception):
             logging.error('Unknown exception occurred: %s', result)
             self.failed_urls.append(url)
+            logging.info('[FAILED_URL] %s', url)
+        elif result is False:
+            # NativeDownloader gave up after its internal retries
+            logging.error('Download failed after all retries: %s', url)
+            self.failed_urls.append(url)
+            logging.info('[FAILED_URL] %s', url)
 
     def _handle_resource(self, url, fmt, lecture_filename, callback, last_update):
         """

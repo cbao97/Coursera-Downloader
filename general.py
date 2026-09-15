@@ -19,7 +19,7 @@ LANG_NAME_TO_CODE_MAPPING = {'Arabic': 'ar', 'Afrikaans': 'af',
                              'Spanish': 'es',
                              'Tamil': 'ta', 'Telegu': 'te', 'Thai': 'th', 'Turkish': 'tr',
                              'Urdu': 'ur',
-                             'Vietnamese': 'vi',
+                             'Vietnamese': 'vi', 'Vietnamese + English': 'vi,en',
                              '-ALL AVAILABLE': 'all', '-NONE': ''}
 
 ALLOWED_BROWSERS = ["edge", "firefox", "brave"]
